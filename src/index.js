@@ -45,7 +45,7 @@ function diagnostic(text, offset, code, severity, message, extra = {}) {
 /**
  * Lint an arbitrary Unicode text string.
  * @param {string} text
- * @param {{showMarks?: boolean, includeKeys?: boolean}} [options]
+ * @param {{showMarks?: boolean}} [options]
  * @returns {Array<{code:string,severity:string,message:string,offset:number,line:number,column:number}>}
  */
 export function lintText(text, options = {}) {
@@ -118,7 +118,6 @@ export function lintText(text, options = {}) {
  * Scan decoded JSON string values, and optionally object keys.
  * The path syntax starts at "$", with array indexes in brackets.
  * @param {string} source JSON source text
- * @param {{showMarks?: boolean}} [options]
  * @param {{showMarks?: boolean, includeKeys?: boolean}} [options]
  * @returns {Array<object>} Diagnostics with jsonPath, plus string-relative offsets.
  */
