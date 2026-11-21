@@ -14,6 +14,7 @@ node bin/bidi-lint.js locales/
 node bin/bidi-lint.js --json --strict locales/he.json
 node bin/bidi-lint.js --show-marks content/he.md
 node bin/bidi-lint.js --include-keys --json locales/he.json
+node bin/bidi-lint.js --sarif --include-keys locales/ > bidi-lint.sarif
 \`\`\`
 
 For project usage, the package declares a \`bidi-lint\` bin executable and \`./src/index.js\` module exports.
@@ -41,6 +42,26 @@ JSON and ARB are parsed, and **decoded string values** are linted with a stable 
 The tool scans files without changing them, does not follow symbolic links, and limits scanning to 5,000 files and 5 MiB per file.
 
 Exit statuses: \`0\` = no lint failures; \`1\` = errors (or warnings when \`--strict\`); \`2\` = usage or file errors. \`--json\` emits a machine-readable report containing counts, findings, and file errors.
+
+### SARIF for code scanning
+
+Use **\`--sarif\`** to produce SARIF 2.1.0 on standard output for code scanning:
+
+    node bin/bidi-lint.js --sarif --include-keys locales/ > bidi-lint.sarif
+
+The output includes rule metadata, severity levels and file locations. For ordinary TXT, Markdown, YAML and other raw-text scans, findings have source line/column coordinates. For JSON/ARB, the linter scans **decoded** values and keys; it **does not invent file line coordinates**. Such SARIF results identify the file only and include the JSON path, decoded-string offset and key/value type in their message and properties. This distinction is important for honest annotations in code-scanning interfaces.
+
+\`--sarif\` and \`--json\` are mutually exclusive. The CLI retains its usual exit codes, including \`--strict\`. The SARIF generator limits output to 50,000 diagnostics rather than silently dropping findings. No source file is modified and no data is uploaded by this tool. To upload SARIF into GitHub Code Scanning, configure that separately in your workflow, with an appropriate token and repository permissions.
+
+Programmatic use:
+
+    import { toSarif } from './src/sarif.js';
+    const sarif = toSarif([{file: 'example.md', code: 'bidi-override',
+      severity: 'error', line: 1, column: 3, offset: 2,
+      message: 'RLO can obscure visible content.'}]);
+
+The published module subpath is \`bidi-lint/sarif\`.
+
 
 ## Library usage
 
