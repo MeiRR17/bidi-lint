@@ -3,10 +3,22 @@
   "version": "0.1.0",
   "description": "Detect hazardous or unbalanced Unicode bidi controls in translation files",
   "type": "module",
-  "engines": { "node": ">=22" },
-  "exports": { ".": "./src/index.js" },
-  "bin": { "bidi-lint": "./bin/bidi-lint.js" },
-  "files": ["src/", "bin/", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./sarif": "./src/sarif.js"
+  },
+  "bin": {
+    "bidi-lint": "./bin/bidi-lint.js"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
   "license": "MIT",
   "scripts": {}
 }
