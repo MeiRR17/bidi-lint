@@ -45,7 +45,7 @@ function diagnostic(text, offset, code, severity, message, extra = {}) {
 /**
  * Lint an arbitrary Unicode text string.
  * @param {string} text
- * @param {{showMarks?: boolean}} [options]
+ * @param {{showMarks?: boolean, includeKeys?: boolean}} [options]
  * @returns {Array<{code:string,severity:string,message:string,offset:number,line:number,column:number}>}
  */
 export function lintText(text, options = {}) {
@@ -115,15 +115,18 @@ export function lintText(text, options = {}) {
 }
 
 /**
- * Scan decoded JSON string values; keys are not scanned.
+ * Scan decoded JSON string values, and optionally object keys.
  * The path syntax starts at "$", with array indexes in brackets.
  * @param {string} source JSON source text
  * @param {{showMarks?: boolean}} [options]
+ * @param {{showMarks?: boolean, includeKeys?: boolean}} [options]
  * @returns {Array<object>} Diagnostics with jsonPath, plus string-relative offsets.
  */
 export function lintJson(source, options = {}) {
   if (typeof source !== 'string') throw new TypeError('JSON source must be a string');
   const root = JSON.parse(source);
+  const includeKeys = options?.includeKeys ?? false;
+  if (typeof includeKeys !== 'boolean') throw new TypeError('includeKeys must be boolean.');
   const diagnostics = [];
 
   function visit(value, path, depth) {
@@ -139,7 +142,14 @@ export function lintJson(source, options = {}) {
       value.forEach((item, index) => visit(item, path + '[' + index + ']', depth + 1));
     } else if (value !== null && typeof value === 'object') {
       for (const [key, item] of Object.entries(value)) {
-        visit(item, path + '[' + JSON.stringify(key) + ']', depth + 1);
+        const nextPath = path + '[' + JSON.stringify(key) + ']';
+        if (includeKeys) {
+          for (const result of lintText(key, options)) {
+            const { line, column, ...rest } = result;
+            diagnostics.push({ ...rest, jsonPath: nextPath, locationKind: 'key' });
+          }
+        }
+        visit(item, nextPath, depth + 1);
       }
     }
   }
