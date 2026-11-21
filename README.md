@@ -39,7 +39,7 @@ Recursively scans JSON, ARB, TXT, MD, YAML/YML, PO, and Apple .strings when pass
 
 JSON and ARB are parsed, and **decoded string values** are linted with a stable \`jsonPath\` location. Other files are scanned as text with line and column locations. YAML/PO/.strings contents are scanned as raw text; escaped Unicode sequences are not decoded in these formats.
 
-The tool scans files without changing them, does not follow symbolic links, and limits scanning to 5,000 files and 5 MiB per file. The library also caps individual source strings at 5 MiB and returns at most 50,000 findings; excessive findings result in an explicit error rather than an incomplete report.
+The tool scans files without changing them, does not follow symbolic links, and limits scanning to 5,000 files and 5 MiB per file. The library also caps individual source strings at 5 MiB and returns at most 50,000 findings; excessive findings result in an explicit error rather than an incomplete report. The CLI separately limits the **total across all scanned files** to 50,000 findings. When that aggregate limit is exceeded, it exits with status 2 **without emitting a partial JSON, text or SARIF report**.
 
 Exit statuses: \`0\` = no lint failures; \`1\` = errors (or warnings when \`--strict\`); \`2\` = usage or file errors. \`--json\` emits a machine-readable report containing counts, findings, and file errors.
 
@@ -50,6 +50,8 @@ Use **\`--sarif\`** to produce SARIF 2.1.0 on standard output for code scanning:
     node bin/bidi-lint.js --sarif --include-keys locales/ > bidi-lint.sarif
 
 The output includes rule metadata, severity levels and file locations. For ordinary TXT, Markdown, YAML and other raw-text scans, findings have source line/column coordinates. For JSON/ARB, the linter scans **decoded** values and keys; it **does not invent file line coordinates**. Such SARIF results identify the file only and include the JSON path, decoded-string offset and key/value type in their message and properties. This distinction is important for honest annotations in code-scanning interfaces.
+
+If any files could not be scanned or parsed, SARIF records `invocations[].executionSuccessful: false` and includes bounded tool-execution notifications; a failed scan is never labeled as a complete success. The CLI still returns exit status 2. Programmatic callers can pass `toSarif(findings, {errors: ['description']})`.
 
 \`--sarif\` and \`--json\` are mutually exclusive. The CLI retains its usual exit codes, including \`--strict\`. The SARIF generator limits output to 50,000 diagnostics rather than silently dropping findings. No source file is modified and no data is uploaded by this tool. To upload SARIF into GitHub Code Scanning, configure that separately in your workflow, with an appropriate token and repository permissions.
 
