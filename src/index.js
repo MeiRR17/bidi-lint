@@ -29,17 +29,32 @@ const INVISIBLE = new Map([
   [0xfeff, 'ZERO WIDTH NO-BREAK SPACE / BOM']
 ]);
 
-function location(text, offset) {
-  const prefix = text.slice(0, offset);
-  const lastBreak = prefix.lastIndexOf('\n');
-  return {
-    line: (prefix.match(/\n/g) ?? []).length + 1,
-    column: offset - lastBreak
-  };
-}
+const MAX_DIAGNOSTICS = 50_000;
+const MAX_SOURCE = 5 * 1024 * 1024;
 
-function diagnostic(text, offset, code, severity, message, extra = {}) {
-  return { code, severity, message, offset, ...location(text, offset), ...extra };
+// Pre-index newline positions once. Computing a prefix for every diagnostic
+// used to make scans with many Unicode controls quadratic in source length.
+function indexLineStarts(text) {
+  const starts = [0];
+  let index = 0;
+  while ((index = text.indexOf('\n', index)) !== -1) {
+    starts.push(index + 1);
+    index++;
+  }
+  return starts;
+}
+function location(starts, offset) {
+  let low = 0, high = starts.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (starts[mid] <= offset) low = mid + 1;
+    else high = mid;
+  }
+  const index = low - 1;
+  return { line: index + 1, column: offset - starts[index] + 1 };
+}
+function diagnostic(starts, offset, code, severity, message, extra = {}) {
+  return { code, severity, message, offset, ...location(starts, offset), ...extra };
 }
 
 /**
@@ -50,6 +65,7 @@ function diagnostic(text, offset, code, severity, message, extra = {}) {
  */
 export function lintText(text, options = {}) {
   if (typeof text !== 'string') throw new TypeError('text must be a string');
+  if (text.length > MAX_SOURCE) throw new RangeError('Text exceeds the 5 MiB scan limit.');
   if (options === null || typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError('options must be an object');
   }
@@ -58,6 +74,13 @@ export function lintText(text, options = {}) {
 
   const stack = [];
   const results = [];
+  const starts = indexLineStarts(text);
+  const add = (offset, code, severity, message, extra = {}) => {
+    if (results.length >= MAX_DIAGNOSTICS) {
+      throw new RangeError('More than 50,000 bidi findings. Narrow the input instead of dropping results.');
+    }
+    results.push(diagnostic(starts, offset, code, severity, message, extra));
+  };
 
   for (let offset = 0; offset < text.length;) {
     const cp = text.codePointAt(offset);
@@ -68,18 +91,18 @@ export function lintText(text, options = {}) {
       const [kind, name] = opener;
       stack.push({ kind, name, offset });
       if (cp === 0x202d || cp === 0x202e) {
-        results.push(diagnostic(text, offset, 'bidi-override', 'error',
-          name + ' overrides visual text order and can conceal content.'));
+        add(offset, 'bidi-override', 'error',
+          name + ' overrides visual text order and can conceal content.');
       } else if (kind === 'embedding') {
-        results.push(diagnostic(text, offset, 'legacy-bidi-embedding', 'warning',
-          name + ' is an explicit bidi embedding; prefer isolated spans.'));
+        add(offset, 'legacy-bidi-embedding', 'warning',
+          name + ' is an explicit bidi embedding; prefer isolated spans.');
       }
     } else if (cp === PDF) {
       if (stack.length && stack[stack.length - 1].kind === 'embedding') {
         stack.pop();
       } else {
-        results.push(diagnostic(text, offset, 'unmatched-pdf', 'error',
-          'PDF does not close an active bidi embedding.'));
+        add(offset, 'unmatched-pdf', 'error',
+          'PDF does not close an active bidi embedding.');
       }
     } else if (cp === PDI) {
       let match = -1;
@@ -87,28 +110,28 @@ export function lintText(text, options = {}) {
         if (stack[i].kind === 'isolate') { match = i; break; }
       }
       if (match === -1) {
-        results.push(diagnostic(text, offset, 'unmatched-pdi', 'error',
-          'PDI does not close an active bidi isolate.'));
+        add(offset, 'unmatched-pdi', 'error',
+          'PDI does not close an active bidi isolate.');
       } else {
         for (let i = stack.length - 1; i > match; i--) {
-          results.push(diagnostic(text, stack[i].offset, 'unclosed-bidi-control',
-            'error', stack[i].name + ' was not closed before PDI.'));
+          add(stack[i].offset, 'unclosed-bidi-control',
+            'error', stack[i].name + ' was not closed before PDI.');
         }
         stack.length = match;
       }
     } else if (INVISIBLE.has(cp)) {
-      results.push(diagnostic(text, offset, 'suspicious-invisible', 'warning',
-        INVISIBLE.get(cp) + ' is invisible and may be accidental.'));
+      add(offset, 'suspicious-invisible', 'warning',
+        INVISIBLE.get(cp) + ' is invisible and may be accidental.');
     } else if (SAFE_MARKS.has(cp) && showMarks) {
-      results.push(diagnostic(text, offset, 'direction-mark', 'info',
-        SAFE_MARKS.get(cp) + ' changes directional rendering; verify its use.'));
+      add(offset, 'direction-mark', 'info',
+        SAFE_MARKS.get(cp) + ' changes directional rendering; verify its use.');
     }
     offset += codeUnitLength;
   }
 
   for (const entry of stack) {
-    results.push(diagnostic(text, entry.offset, 'unclosed-bidi-control', 'error',
-      entry.name + ' was not closed before end of text.'));
+    add(entry.offset, 'unclosed-bidi-control', 'error',
+      entry.name + ' was not closed before end of text.');
   }
   results.sort((a, b) => a.offset - b.offset);
   return results;
@@ -123,6 +146,7 @@ export function lintText(text, options = {}) {
  */
 export function lintJson(source, options = {}) {
   if (typeof source !== 'string') throw new TypeError('JSON source must be a string');
+  if (source.length > MAX_SOURCE) throw new RangeError('JSON source exceeds the 5 MiB scan limit.');
   const root = JSON.parse(source);
   const includeKeys = options?.includeKeys ?? false;
   if (typeof includeKeys !== 'boolean') throw new TypeError('includeKeys must be boolean.');
@@ -135,6 +159,7 @@ export function lintJson(source, options = {}) {
         // The reported line and column are within the decoded string value,
         // not the raw JSON file; jsonPath locates the actual value.
         const { line, column, ...rest } = result;
+        if (diagnostics.length >= MAX_DIAGNOSTICS) throw new RangeError('More than 50,000 JSON bidi findings.');
         diagnostics.push({ ...rest, jsonPath: path });
       }
     } else if (Array.isArray(value)) {
@@ -145,6 +170,7 @@ export function lintJson(source, options = {}) {
         if (includeKeys) {
           for (const result of lintText(key, options)) {
             const { line, column, ...rest } = result;
+            if (diagnostics.length >= MAX_DIAGNOSTICS) throw new RangeError('More than 50,000 JSON bidi findings.');
             diagnostics.push({ ...rest, jsonPath: nextPath, locationKind: 'key' });
           }
         }
