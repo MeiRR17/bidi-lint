@@ -9,6 +9,7 @@ const JSON_EXTENSIONS = new Set(['.json', '.arb']);
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', '.next']);
 const MAX_FILES = 5000;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_REPORT_FINDINGS = 50_000;
 const HELP = [
   'bidi-lint v0.1.0 — Find risky Unicode direction controls',
   '',
@@ -118,6 +119,7 @@ async function main() {
   }
 
   const results = [];
+  let findingCount = 0;
   for (const file of files) {
     const path = relative(process.cwd(), file.path) || file.path;
     if (file.bytes > MAX_FILE_BYTES) {
@@ -130,6 +132,13 @@ async function main() {
       const diagnostics = parsed
         ? lintJson(source, { showMarks: args.showMarks, includeKeys: args.includeKeys })
         : lintText(source, { showMarks: args.showMarks });
+      if (findingCount + diagnostics.length > MAX_REPORT_FINDINGS) {
+        process.stderr.write('bidi-lint: report exceeds 50,000 findings across files. ' +
+          'Narrow the selection; no incomplete report was generated.\n');
+        process.exitCode = 2;
+        return;
+      }
+      findingCount += diagnostics.length;
       results.push({ file: path, diagnostics });
     } catch (error) {
       errors.push(path + ': ' + error.message);
@@ -146,7 +155,7 @@ async function main() {
   };
 
   if (args.sarif) {
-    process.stdout.write(JSON.stringify(toSarif(all), null, 2) + '\n');
+    process.stdout.write(JSON.stringify(toSarif(all, { errors }), null, 2) + '\n');
     for (const error of errors) process.stderr.write('bidi-lint: ' + error + '\n');
   } else if (args.json) {
     process.stdout.write(JSON.stringify({
