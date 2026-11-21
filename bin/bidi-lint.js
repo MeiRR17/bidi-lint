@@ -17,6 +17,7 @@ const HELP = [
   '  --json          Print one machine-readable JSON report',
   '  --strict        Treat warnings as failures (errors always fail)',
   '  --show-marks    Include informational LRM/RLM/ALM diagnostics',
+  '  --include-keys  Also scan decoded JSON/ARB object keys, not only values',
   '  --help, -h      Show this help',
   '  --version       Print the version',
   '',
@@ -24,6 +25,7 @@ const HELP = [
   '             .po and .strings; skip common dependency/build folders.',
   'Explicit file arguments can have any extension.',
   'JSON/ARB: lint decoded string values with exact JSON paths.',
+  '          --include-keys adds key-name inspection (off by default).',
   'Other formats: scan raw source text with line and column numbers.',
   '',
   'Exit codes: 0 = no failures, 1 = lint failures, 2 = usage/I/O error.',
@@ -32,7 +34,7 @@ const HELP = [
 ].join('\n');
 
 function argsFrom(argv) {
-  const options = { json: false, strict: false, showMarks: false, inputs: [] };
+  const options = { json: false, strict: false, showMarks: false, includeKeys: false, inputs: [] };
   let positional = false;
   for (const arg of argv) {
     if (positional) { options.inputs.push(arg); continue; }
@@ -42,6 +44,7 @@ function argsFrom(argv) {
     if (arg === '--json') options.json = true;
     else if (arg === '--strict') options.strict = true;
     else if (arg === '--show-marks') options.showMarks = true;
+    else if (arg === '--include-keys') options.includeKeys = true;
     else if (arg.startsWith('-')) throw new Error('Unknown option: ' + arg);
     else options.inputs.push(arg);
   }
@@ -121,7 +124,7 @@ async function main() {
       const source = await readFile(file.path, 'utf8');
       const parsed = JSON_EXTENSIONS.has(extname(file.path).toLowerCase());
       const diagnostics = parsed
-        ? lintJson(source, { showMarks: args.showMarks })
+        ? lintJson(source, { showMarks: args.showMarks, includeKeys: args.includeKeys })
         : lintText(source, { showMarks: args.showMarks });
       results.push({ file: path, diagnostics });
     } catch (error) {
@@ -147,7 +150,7 @@ async function main() {
   } else {
     for (const d of all) {
       const spot = d.jsonPath
-        ? d.jsonPath + ' (string offset ' + d.offset + ')'
+        ? d.jsonPath + ' (' + (d.locationKind === 'key' ? 'key' : 'value') + ' offset ' + d.offset + ')'
         : d.line + ':' + d.column;
       process.stdout.write(d.file + ':' + spot + ' [' + d.severity + '] ' +
         d.code + ': ' + d.message + '\n');
