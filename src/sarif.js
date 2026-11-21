@@ -29,10 +29,13 @@ function sarifLevel(severity) {
   return severity === 'error' ? 'error' : severity === 'warning' ? 'warning' : 'note';
 }
 
-/** Convert existing diagnostics to a SARIF 2.1.0 log without reading files. */
-export function toSarif(diagnostics) {
+/** Convert existing diagnostics to SARIF 2.1.0; record failed scans explicitly. */
+export function toSarif(diagnostics, { errors = [] } = {}) {
   if (!Array.isArray(diagnostics) || diagnostics.length > LIMIT) {
     throw new RangeError('SARIF export requires at most 50,000 diagnostics.');
+  }
+  if (!Array.isArray(errors) || errors.some(error => typeof error !== 'string')) {
+    throw new TypeError('SARIF scan errors must be an array of messages.');
   }
   const knownRules = new Map();
   const results = [];
@@ -90,6 +93,20 @@ export function toSarif(diagnostics) {
         rules: [...knownRules.values()],
       } },
       results,
+      invocations: [{
+        executionSuccessful: errors.length === 0,
+        ...(errors.length ? { toolExecutionNotifications: [
+          ...errors.slice(0, 500).map(error => ({
+            level: 'error',
+            message: { text: error.slice(0, 2000) },
+          })),
+          ...(errors.length > 500 ? [{
+            level: 'error',
+            message: { text: String(errors.length - 500) +
+              ' additional scan errors omitted from SARIF notifications.' },
+          }] : []),
+        ] } : {}),
+      }],
     }],
   };
 }
