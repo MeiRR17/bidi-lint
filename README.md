@@ -39,7 +39,7 @@ Recursively scans JSON, ARB, TXT, MD, YAML/YML, PO, and Apple .strings when pass
 
 JSON and ARB are parsed, and **decoded string values** are linted with a stable \`jsonPath\` location. Other files are scanned as text with line and column locations. YAML/PO/.strings contents are scanned as raw text; escaped Unicode sequences are not decoded in these formats.
 
-The tool scans files without changing them, does not follow symbolic links, and limits scanning to 5,000 files and 5 MiB per file.
+The tool scans files without changing them, does not follow symbolic links, and limits scanning to 5,000 files and 5 MiB per file. The library also caps individual source strings at 5 MiB and returns at most 50,000 findings; excessive findings result in an explicit error rather than an incomplete report.
 
 Exit statuses: \`0\` = no lint failures; \`1\` = errors (or warnings when \`--strict\`); \`2\` = usage or file errors. \`--json\` emits a machine-readable report containing counts, findings, and file errors.
 
@@ -73,7 +73,7 @@ console.log(lintJson('{"welcome":"שלום"}'));
 console.log(lintJson('{"welcome":"שלום"}', {includeKeys: true}));
 \`\`\`
 
-The API uses UTF-16 string offsets. JSON findings report decoded string offsets and paths, not raw source-file line positions. When `includeKeys: true`, key diagnostic offsets are relative to the decoded key itself; values continue to be reported relative to their decoded value.
+Source-line lookup is indexed once per input instead of scanning every text prefix for each diagnostic, improving performance on files containing many directionality controls. The API uses UTF-16 string offsets. JSON findings report decoded string offsets and paths, not raw source-file line positions. When `includeKeys: true`, key diagnostic offsets are relative to the decoded key itself; values continue to be reported relative to their decoded value.
 
 ## Privacy
 
