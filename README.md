@@ -13,6 +13,7 @@ node bin/bidi-lint.js --help
 node bin/bidi-lint.js locales/
 node bin/bidi-lint.js --json --strict locales/he.json
 node bin/bidi-lint.js --show-marks content/he.md
+node bin/bidi-lint.js --include-keys --json locales/he.json
 \`\`\`
 
 For project usage, the package declares a \`bidi-lint\` bin executable and \`./src/index.js\` module exports.
@@ -48,9 +49,10 @@ import { lintText, lintJson } from './src/index.js';
 
 console.log(lintText('שלום\u202eabc'));
 console.log(lintJson('{"welcome":"שלום"}'));
+console.log(lintJson('{"welcome":"שלום"}', {includeKeys: true}));
 \`\`\`
 
-The API uses UTF-16 string offsets. JSON findings report decoded string offsets and paths, not raw source-file line positions.
+The API uses UTF-16 string offsets. JSON findings report decoded string offsets and paths, not raw source-file line positions. When `includeKeys: true`, key diagnostic offsets are relative to the decoded key itself; values continue to be reported relative to their decoded value.
 
 ## Privacy
 
