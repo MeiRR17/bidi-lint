@@ -22,7 +22,7 @@ const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 const HELP = [
   'bidi-lint v0.1.0 — Find risky Unicode direction controls',
   '',
-  'Usage: bidi-lint [options] <file-or-directory> [...]',
+  'Usage: bidi-lint [options] <file-or-directory|-> [...]',
   '',
   'Options:',
   '  --json          Print one machine-readable JSON report',
@@ -32,6 +32,7 @@ const HELP = [
   '  --max-warnings N  Fail if warning count exceeds N (0–50000)',
   '  --max-rule-warnings RULE=N  Repeatable per-warning-rule budget (0–50000)',
   '                       RULE: legacy-bidi-embedding | suspicious-invisible',
+  '  --stdin-format text|json  Decode - from stdin as raw text or JSON (default text)',
   '  --show-marks    Include informational LRM/RLM/ALM diagnostics',
   '  --include-keys  Also scan decoded JSON/ARB object keys, not only values',
   '  --help, -h      Show this help',
@@ -40,6 +41,7 @@ const HELP = [
   'Directories: recursively scan .json, .arb, .txt, .md, .yaml, .yml,',
   '             .po and .strings; skip common dependency/build folders.',
   'Explicit file arguments can have any extension.',
+  'Use - once to read stdin (max 5 MiB; strict UTF-8; not with --sarif).',
   'JSON/ARB: lint decoded string values with exact JSON paths.',
   '          --include-keys adds key-name inspection (off by default).',
   'Other formats: scan raw source text with line and column numbers.',
@@ -50,7 +52,7 @@ const HELP = [
 ].join('\n');
 
 function argsFrom(argv) {
-  const options = { json: false, sarif: false, summaryOnly: false, strict: false, maxWarnings: null, warningRuleBudgets: new Map(), showMarks: false, includeKeys: false, inputs: [] };
+  const options = { json: false, sarif: false, summaryOnly: false, strict: false, maxWarnings: null, warningRuleBudgets: new Map(), stdinFormat: 'text', stdinFormatExplicit: false, showMarks: false, includeKeys: false, inputs: [] };
   let positional = false;
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
@@ -88,21 +90,46 @@ function argsFrom(argv) {
       }
       options.warningRuleBudgets.set(match[1], Number(match[2]));
     }
+    else if (arg === '--stdin-format') {
+      if (options.stdinFormatExplicit) throw new Error('--stdin-format may only be specified once.');
+      const value = argv[++index];
+      if (value !== 'text' && value !== 'json') {
+        throw new Error('--stdin-format requires text or json.');
+      }
+      options.stdinFormat = value;
+      options.stdinFormatExplicit = true;
+    }
     else if (arg === '--show-marks') options.showMarks = true;
     else if (arg === '--include-keys') options.includeKeys = true;
+    else if (arg === '-') options.inputs.push(arg);
     else if (arg.startsWith('-')) throw new Error('Unknown option: ' + arg);
     else options.inputs.push(arg);
   }
   if (Number(options.sarif) + Number(options.json) + Number(options.summaryOnly) > 1) {
     throw new Error('--sarif, --json and --summary-only are mutually exclusive.');
   }
-  if (!options.inputs.length) throw new Error('Provide at least one file or directory.');
+  if (!options.inputs.length) throw new Error('Provide at least one file, directory or - for stdin.');
+  const stdinCount = options.inputs.filter(input => input === '-').length;
+  if (stdinCount > 1) throw new Error('Only one - stdin input is allowed.');
+  if (options.stdinFormatExplicit && !stdinCount) {
+    throw new Error('--stdin-format requires - as an input.');
+  }
+  if (stdinCount && options.sarif) {
+    throw new Error('--sarif cannot be used with stdin: there is no repository-relative source path.');
+  }
   return options;
 }
 
 async function collect(inputPath, files, seen, errors, explicit = true) {
   if (files.length >= MAX_FILES) {
     throw new Error('File limit reached (5,000). Narrow the directory selection.');
+  }
+  if (inputPath === '-') {
+    if (!seen.has('<stdin>')) {
+      seen.add('<stdin>');
+      files.push({ path: null, bytes: 0, fromStdin: true });
+    }
+    return;
   }
   let stats;
   try {
@@ -139,6 +166,26 @@ async function collect(inputPath, files, seen, errors, explicit = true) {
   }
 }
 
+/**
+ * Read redirected input without materializing a temporary file.
+ * Reject oversized streams before Buffer.concat, just as on-disk files
+ * are rejected before parsing. The strict shared decoder rejects malformed
+ * UTF-8 and accepts a single optional leading BOM.
+ */
+async function readStdinBounded() {
+  const chunks = [];
+  let byteLength = 0;
+  for await (const chunk of process.stdin) {
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+    byteLength += bytes.byteLength;
+    if (byteLength > MAX_FILE_BYTES) {
+      throw new RangeError('stdin exceeds the 5 MiB input limit.');
+    }
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks, byteLength);
+}
+
 async function main() {
   let args;
   try {
@@ -156,7 +203,9 @@ async function main() {
   const errors = [];
   const seen = new Set();
   try {
-    for (const input of args.inputs) await collect(resolve(input), files, seen, errors);
+    for (const input of args.inputs) {
+      await collect(input === '-' ? '-' : resolve(input), files, seen, errors);
+    }
   } catch (error) {
     errors.push(error.message);
   }
@@ -164,7 +213,7 @@ async function main() {
   const results = [];
   let findingCount = 0;
   for (const file of files) {
-    const path = relative(process.cwd(), file.path) || file.path;
+    const path = file.fromStdin ? '<stdin>' : relative(process.cwd(), file.path) || file.path;
     if (file.bytes > MAX_FILE_BYTES) {
       errors.push(path + ': file exceeds 5 MiB.');
       continue;
@@ -172,13 +221,14 @@ async function main() {
     try {
       // Bound the actual read as well as the earlier stat. Files can grow
       // between collection and scanning; never silently scan a partial file.
-      const bytes = await readFile(file.path);
+      const bytes = file.fromStdin ? await readStdinBounded() : await readFile(file.path);
       if (bytes.length > MAX_FILE_BYTES) {
         errors.push(path + ': file exceeds 5 MiB after collection.');
         continue;
       }
       const source = UTF8_DECODER.decode(bytes);
-      const parsed = JSON_EXTENSIONS.has(extname(file.path).toLowerCase());
+      const parsed = file.fromStdin ? args.stdinFormat === 'json' :
+        JSON_EXTENSIONS.has(extname(file.path).toLowerCase());
       const diagnostics = parsed
         ? lintJson(source, { showMarks: args.showMarks, includeKeys: args.includeKeys })
         : lintText(source, { showMarks: args.showMarks });

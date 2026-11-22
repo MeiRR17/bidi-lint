@@ -18,6 +18,8 @@ node bin/bidi-lint.js --sarif --include-keys locales/ > bidi-lint.sarif
 node bin/bidi-lint.js --summary-only --strict locales/ > bidi-summary.json
 node bin/bidi-lint.js --summary-only --max-warnings 5 locales/ > bidi-budget.json
 node bin/bidi-lint.js --summary-only --max-rule-warnings legacy-bidi-embedding=0 --max-rule-warnings suspicious-invisible=3 locales/ > bidi-rule-budgets.json
+cat content/he.md | node bin/bidi-lint.js --summary-only - > bidi-stdin-summary.json
+cat locales/he.json | node bin/bidi-lint.js --stdin-format json --summary-only - > bidi-json-stdin-summary.json
 \`\`\`
 
 For project usage, the package declares a \`bidi-lint\` bin executable and \`./src/index.js\` module exports.
@@ -35,6 +37,17 @@ For project usage, the package declares a \`bidi-lint\` bin executable and \`./s
 | \`direction-mark\` | Info | Optional LRM/RLM/ALM annotations with \`--show-marks\` |
 
 Balanced LRI/RLI/FSI isolates are allowed. Ordinary bidirectional text is not reported just because it mixes Hebrew, Arabic, English, and numbers. LRM/RLM/ALM marks are often intentional and are reported only when requested.
+
+## Piped input (stdin)
+
+The CLI accepts a single **`-`** positional input, reading **at most 5 MiB** directly from standard input without writing a temporary file. By default, stdin is scanned as raw UTF-8 text, with line/column findings; use `--stdin-format json` to parse JSON and lint decoded values (and, with `--include-keys`, object keys). For example:
+
+```sh
+printf 'שלום\\u202Ehidden\\u202C' | node bin/bidi-lint.js --summary-only -
+cat locales/he.json | node bin/bidi-lint.js --stdin-format json --summary-only -
+```
+
+Stdin follows the same **strict UTF-8 decoding**, optional leading BOM, per-source 5 MiB limit, 50,000-finding aggregate limit, warning budgets and exit statuses as file input. It can appear alongside file/directory inputs, but may appear only once; `--stdin-format` without `-` is a usage error. In non-summary output the source is labeled `<stdin>`, not an invented filename. **SARIF does not accept stdin**, because a pipeline has no trustworthy repository-relative source location; attempting `--sarif -` returns usage status **2** rather than fabricating a code-scanning link. For path-bearing SARIF use an actual file. An incomplete stdin read or malformed UTF-8 causes `--summary-only` to fail closed with no partial JSON report. Stdin contents are not stored, transmitted or copied to a file by this tool; shell pipelines and terminal history remain the caller's responsibility.
 
 ## File support
 
