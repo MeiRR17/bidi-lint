@@ -16,6 +16,7 @@ node bin/bidi-lint.js --show-marks content/he.md
 node bin/bidi-lint.js --include-keys --json locales/he.json
 node bin/bidi-lint.js --sarif --include-keys locales/ > bidi-lint.sarif
 node bin/bidi-lint.js --summary-only --strict locales/ > bidi-summary.json
+node bin/bidi-lint.js --summary-only --max-warnings 5 locales/ > bidi-budget.json
 \`\`\`
 
 For project usage, the package declares a \`bidi-lint\` bin executable and \`./src/index.js\` module exports.
@@ -42,7 +43,11 @@ JSON and ARB are parsed, and **decoded string values** are linted with a stable 
 
 The tool scans files without changing them, does not follow symbolic links, and limits scanning to 5,000 files and 5 MiB per file. File bytes are decoded with **strict UTF-8**; invalid UTF-8 fails the scan rather than silently substituting replacement characters. An optional leading UTF-8 byte-order mark is accepted. File size is rechecked after reading in case it changed after discovery. The library also caps individual source strings at 5 MiB and returns at most 50,000 findings; excessive findings result in an explicit error rather than an incomplete report. The CLI separately limits the **total across all scanned files** to 50,000 findings. When that aggregate limit is exceeded, it exits with status 2 **without emitting a partial JSON, text or SARIF report**.
 
-Exit statuses: \`0\` = no lint failures; \`1\` = errors (or warnings when \`--strict\`); \`2\` = usage or file errors. \`--json\` emits a machine-readable report containing counts, findings, and file errors.
+Exit statuses: \`0\` = no lint failures; \`1\` = errors (or warnings when \`--strict\`, or warnings above the optional \`--max-warnings\` budget); \`2\` = usage or file errors. \`--json\` emits a machine-readable report containing counts, findings, and file errors.
+
+### Incremental warning budgets
+
+Use `--max-warnings N` to allow **at most N warnings across the complete scan**, with `N` an integer from 0 to 50,000. Unlike `--strict` (which fails on any warning), this allows teams to ratchet down legacy warnings without letting newly introduced warnings silently grow. If warnings exceed the budget, the CLI exits **1** and writes only counts and the configured threshold to stderr; it does not change report finding order or redact new source details. A scan/read/parse error still has exit status **2**, which takes precedence over the warning budget; regular errors always fail irrespective of the budget. The `--strict` policy still fails on all warnings even when a larger budget is supplied. Both detailed `--json` and redacted `--summary-only` JSON output include `warningBudget` and `warningBudgetExceeded` when the flag is used, while SARIF retains its standard structure and reports the budget violation via the process exit status. The option does not change files or suppress findings.
 
 ### Counts-only CI reporting
 

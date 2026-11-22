@@ -24,6 +24,7 @@ const HELP = [
   '  --sarif         Print SARIF 2.1.0 for GitHub Code Scanning',
   '  --summary-only  Print counts-only JSON; fail closed on scan errors',
   '  --strict        Treat warnings as failures (errors always fail)',
+  '  --max-warnings N  Fail if warning count exceeds N (0–50000)',
   '  --show-marks    Include informational LRM/RLM/ALM diagnostics',
   '  --include-keys  Also scan decoded JSON/ARB object keys, not only values',
   '  --help, -h      Show this help',
@@ -42,9 +43,10 @@ const HELP = [
 ].join('\n');
 
 function argsFrom(argv) {
-  const options = { json: false, sarif: false, summaryOnly: false, strict: false, showMarks: false, includeKeys: false, inputs: [] };
+  const options = { json: false, sarif: false, summaryOnly: false, strict: false, maxWarnings: null, showMarks: false, includeKeys: false, inputs: [] };
   let positional = false;
-  for (const arg of argv) {
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index];
     if (positional) { options.inputs.push(arg); continue; }
     if (arg === '--') { positional = true; continue; }
     if (arg === '--help' || arg === '-h') return { help: true };
@@ -53,6 +55,17 @@ function argsFrom(argv) {
     else if (arg === '--sarif') options.sarif = true;
     else if (arg === '--summary-only') options.summaryOnly = true;
     else if (arg === '--strict') options.strict = true;
+    else if (arg === '--max-warnings') {
+      if (options.maxWarnings !== null) {
+        throw new Error('--max-warnings may only be specified once.');
+      }
+      const raw = argv[++index];
+      if (typeof raw !== 'string' || !/^(?:0|[1-9][0-9]{0,4})$/.test(raw) ||
+          Number(raw) > MAX_REPORT_FINDINGS) {
+        throw new Error('--max-warnings requires a whole number from 0 to 50000.');
+      }
+      options.maxWarnings = Number(raw);
+    }
     else if (arg === '--show-marks') options.showMarks = true;
     else if (arg === '--include-keys') options.includeKeys = true;
     else if (arg.startsWith('-')) throw new Error('Unknown option: ' + arg);
@@ -168,6 +181,7 @@ async function main() {
     warnings: all.filter(d => d.severity === 'warning').length,
     info: all.filter(d => d.severity === 'info').length
   };
+  const warningBudgetExceeded = args.maxWarnings !== null && counts.warnings > args.maxWarnings;
 
   if (args.summaryOnly) {
     if (errors.length) {
@@ -176,9 +190,13 @@ async function main() {
       process.exitCode = 2;
       return;
     }
-    process.stdout.write(JSON.stringify(lintSummary(all, {
-      scannedFiles: results.length, scanErrors: 0,
-    }), null, 2) + '\n');
+    process.stdout.write(JSON.stringify({
+      ...lintSummary(all, { scannedFiles: results.length, scanErrors: 0 }),
+      ...(args.maxWarnings === null ? {} : {
+        warningBudget: args.maxWarnings,
+        warningBudgetExceeded,
+      }),
+    }, null, 2) + '\n');
   } else if (args.sarif) {
     process.stdout.write(JSON.stringify(toSarif(all, { errors }), null, 2) + '\n');
     for (const error of errors) process.stderr.write('bidi-lint: ' + error + '\n');
@@ -186,6 +204,9 @@ async function main() {
     process.stdout.write(JSON.stringify({
       tool: 'bidi-lint', version: '0.1.0',
       scannedFiles: results.length, counts,
+      ...(args.maxWarnings === null ? {} : {
+        warningBudget: args.maxWarnings, warningBudgetExceeded,
+      }),
       diagnostics: all, errors
     }, null, 2) + '\n');
   } else {
@@ -205,8 +226,13 @@ async function main() {
     );
   }
 
+  if (warningBudgetExceeded) {
+    // Aggregate counts only: safe in --summary-only mode as well.
+    process.stderr.write('bidi-lint: warning budget exceeded (' + counts.warnings +
+      ' warnings; limit ' + args.maxWarnings + ').\n');
+  }
   if (errors.length) process.exitCode = 2;
-  else if (counts.errors || (args.strict && counts.warnings)) process.exitCode = 1;
+  else if (counts.errors || (args.strict && counts.warnings) || warningBudgetExceeded) process.exitCode = 1;
 }
 
 await main().catch(error => {
