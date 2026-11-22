@@ -33,10 +33,10 @@ For project usage, the package declares a \`bidi-lint\` bin executable and \`./s
 | \`unmatched-pdf\` | Error | PDF occurs without an active embedding |
 | \`unmatched-pdi\` | Error | PDI occurs without an active isolate |
 | \`unclosed-bidi-control\` | Error | Isolate or embedding is not closed |
-| \`suspicious-invisible\` | Warning | Invisible ZWSP or in-text BOM detected |
+| \`suspicious-invisible\` | Warning | Invisible ZWSP, WORD JOINER, SOFT HYPHEN or in-text BOM detected |
 | \`direction-mark\` | Info | Optional LRM/RLM/ALM annotations with \`--show-marks\` |
 
-Balanced LRI/RLI/FSI isolates are allowed. Ordinary bidirectional text is not reported just because it mixes Hebrew, Arabic, English, and numbers. LRM/RLM/ALM marks are often intentional and are reported only when requested.
+Balanced LRI/RLI/FSI isolates are allowed. Ordinary bidirectional text is not reported just because it mixes Hebrew, Arabic, English, and numbers. LRM/RLM/ALM marks are often intentional and are reported only when requested. The warning-only invisible-character rule also covers U+2060 WORD JOINER and U+00AD SOFT HYPHEN, along with U+200B ZERO WIDTH SPACE and U+FEFF. A soft hyphen or word joiner may be legitimate typography; warnings require contextual review and the tool never rewrites or strips them. ZWJ and ZWNJ, which have legitimate uses in complex scripts, are not blanket-flagged.
 
 ## Piped input (stdin)
 
@@ -53,7 +53,7 @@ Stdin follows the same **strict UTF-8 decoding**, optional leading BOM, per-sour
 
 Recursively scans JSON, ARB, TXT, MD, YAML/YML, PO, and Apple .strings when passed a directory; common build and dependency folders are skipped. Explicit file arguments may use other extensions.
 
-JSON and ARB are parsed, and **decoded string values** are linted with a stable \`jsonPath\` location. Other files are scanned as text with line and column locations. YAML/PO/.strings contents are scanned as raw text; escaped Unicode sequences are not decoded in these formats.
+JSON and ARB are parsed, and **decoded string values** are linted with a stable \`jsonPath\` location. Other files are scanned as text with line and column locations, recognizing LF, CRLF, and bare CR line endings without changing UTF-16 offsets. YAML/PO/.strings contents are scanned as raw text; escaped Unicode sequences are not decoded in these formats. JSON finding offsets are relative to decoded strings, not raw JSON source lines.
 
 The tool scans files without changing them, does not follow symbolic links, and limits scanning to 5,000 files and 5 MiB per file. File bytes are decoded with **strict UTF-8**; invalid UTF-8 fails the scan rather than silently substituting replacement characters. An optional leading UTF-8 byte-order mark is accepted. File size is rechecked after reading in case it changed after discovery. The library also caps individual source strings at 5 MiB and returns at most 50,000 findings; excessive findings result in an explicit error rather than an incomplete report. The CLI separately limits the **total across all scanned files** to 50,000 findings. When that aggregate limit is exceeded, it exits with status 2 **without emitting a partial JSON, text or SARIF report**.
 

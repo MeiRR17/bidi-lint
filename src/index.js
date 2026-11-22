@@ -26,20 +26,25 @@ const SAFE_MARKS = new Map([
 ]);
 const INVISIBLE = new Map([
   [0x200b, 'ZERO WIDTH SPACE'],
+  [0x2060, 'WORD JOINER'],
+  [0x00ad, 'SOFT HYPHEN'],
   [0xfeff, 'ZERO WIDTH NO-BREAK SPACE / BOM']
 ]);
 
 const MAX_DIAGNOSTICS = 50_000;
 const MAX_SOURCE = 5 * 1024 * 1024;
 
-// Pre-index newline positions once. Computing a prefix for every diagnostic
-// used to make scans with many Unicode controls quadratic in source length.
+// Pre-index line boundaries to avoid quadratic location lookups.
+// CRLF is one line break; bare CR and LF are also valid terminators.
 function indexLineStarts(text) {
   const starts = [0];
-  let index = 0;
-  while ((index = text.indexOf('\n', index)) !== -1) {
-    starts.push(index + 1);
-    index++;
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === '\r') {
+      if (text[index + 1] === '\n') index++;
+      starts.push(index + 1);
+    } else if (text[index] === '\n') {
+      starts.push(index + 1);
+    }
   }
   return starts;
 }
@@ -120,6 +125,8 @@ export function lintText(text, options = {}) {
         stack.length = match;
       }
     } else if (INVISIBLE.has(cp)) {
+      // SHY and WORD JOINER can be intentional typography. These remain
+      // warnings for contextual review, never unconditional blocking errors.
       add(offset, 'suspicious-invisible', 'warning',
         INVISIBLE.get(cp) + ' is invisible and may be accidental.');
     } else if (SAFE_MARKS.has(cp) && showMarks) {
