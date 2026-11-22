@@ -15,6 +15,7 @@ node bin/bidi-lint.js --json --strict locales/he.json
 node bin/bidi-lint.js --show-marks content/he.md
 node bin/bidi-lint.js --include-keys --json locales/he.json
 node bin/bidi-lint.js --sarif --include-keys locales/ > bidi-lint.sarif
+node bin/bidi-lint.js --summary-only --strict locales/ > bidi-summary.json
 \`\`\`
 
 For project usage, the package declares a \`bidi-lint\` bin executable and \`./src/index.js\` module exports.
@@ -42,6 +43,12 @@ JSON and ARB are parsed, and **decoded string values** are linted with a stable 
 The tool scans files without changing them, does not follow symbolic links, and limits scanning to 5,000 files and 5 MiB per file. File bytes are decoded with **strict UTF-8**; invalid UTF-8 fails the scan rather than silently substituting replacement characters. An optional leading UTF-8 byte-order mark is accepted. File size is rechecked after reading in case it changed after discovery. The library also caps individual source strings at 5 MiB and returns at most 50,000 findings; excessive findings result in an explicit error rather than an incomplete report. The CLI separately limits the **total across all scanned files** to 50,000 findings. When that aggregate limit is exceeded, it exits with status 2 **without emitting a partial JSON, text or SARIF report**.
 
 Exit statuses: \`0\` = no lint failures; \`1\` = errors (or warnings when \`--strict\`); \`2\` = usage or file errors. \`--json\` emits a machine-readable report containing counts, findings, and file errors.
+
+### Counts-only CI reporting
+
+Use \`--summary-only\` to write a strictly **aggregate-only JSON** report with scanned-file count, totals by severity and per-rule counts. It intentionally excludes paths, JSON paths, source text, positions, messages, and individual findings. **If any file cannot be collected, read, decoded, or parsed, the command exits 2 and emits no summary**, rather than presenting partial counts as complete. Error output in this mode includes only the count of scan failures. Existing \`--strict\` changes warning-related exit status, not the summary content. The CLI output mode is mutually exclusive with \`--json\` and \`--sarif\`.
+
+Programmatic usage: \`import { lintSummary } from './src/summary.js'\` then \`lintSummary(findings, { scannedFiles, scanErrors: 0 })\`. The helper rejects explicitly incomplete scans, caps inputs at 50,000 findings, and normalizes unfamiliar rule codes to an \`other\` count rather than exposing arbitrary strings. Aggregate counts themselves may be sensitive.
 
 ### SARIF for code scanning
 

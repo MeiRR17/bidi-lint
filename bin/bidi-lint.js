@@ -3,6 +3,7 @@ import { lstat, readFile, readdir } from 'node:fs/promises';
 import { extname, join, relative, resolve } from 'node:path';
 import { lintText, lintJson } from '../src/index.js';
 import { toSarif } from '../src/sarif.js';
+import { lintSummary } from '../src/summary.js';
 
 const ACCEPTED = new Set(['.json', '.arb', '.txt', '.md', '.yaml', '.yml', '.po', '.strings']);
 const JSON_EXTENSIONS = new Set(['.json', '.arb']);
@@ -21,6 +22,7 @@ const HELP = [
   'Options:',
   '  --json          Print one machine-readable JSON report',
   '  --sarif         Print SARIF 2.1.0 for GitHub Code Scanning',
+  '  --summary-only  Print counts-only JSON; fail closed on scan errors',
   '  --strict        Treat warnings as failures (errors always fail)',
   '  --show-marks    Include informational LRM/RLM/ALM diagnostics',
   '  --include-keys  Also scan decoded JSON/ARB object keys, not only values',
@@ -40,7 +42,7 @@ const HELP = [
 ].join('\n');
 
 function argsFrom(argv) {
-  const options = { json: false, sarif: false, strict: false, showMarks: false, includeKeys: false, inputs: [] };
+  const options = { json: false, sarif: false, summaryOnly: false, strict: false, showMarks: false, includeKeys: false, inputs: [] };
   let positional = false;
   for (const arg of argv) {
     if (positional) { options.inputs.push(arg); continue; }
@@ -49,13 +51,16 @@ function argsFrom(argv) {
     if (arg === '--version') return { version: true };
     if (arg === '--json') options.json = true;
     else if (arg === '--sarif') options.sarif = true;
+    else if (arg === '--summary-only') options.summaryOnly = true;
     else if (arg === '--strict') options.strict = true;
     else if (arg === '--show-marks') options.showMarks = true;
     else if (arg === '--include-keys') options.includeKeys = true;
     else if (arg.startsWith('-')) throw new Error('Unknown option: ' + arg);
     else options.inputs.push(arg);
   }
-  if (options.sarif && options.json) throw new Error('--sarif and --json are mutually exclusive.');
+  if (Number(options.sarif) + Number(options.json) + Number(options.summaryOnly) > 1) {
+    throw new Error('--sarif, --json and --summary-only are mutually exclusive.');
+  }
   if (!options.inputs.length) throw new Error('Provide at least one file or directory.');
   return options;
 }
@@ -164,7 +169,17 @@ async function main() {
     info: all.filter(d => d.severity === 'info').length
   };
 
-  if (args.sarif) {
+  if (args.summaryOnly) {
+    if (errors.length) {
+      process.stderr.write('bidi-lint: incomplete scan (' + errors.length +
+        ' file or parse errors). No summary was generated.\n');
+      process.exitCode = 2;
+      return;
+    }
+    process.stdout.write(JSON.stringify(lintSummary(all, {
+      scannedFiles: results.length, scanErrors: 0,
+    }), null, 2) + '\n');
+  } else if (args.sarif) {
     process.stdout.write(JSON.stringify(toSarif(all, { errors }), null, 2) + '\n');
     for (const error of errors) process.stderr.write('bidi-lint: ' + error + '\n');
   } else if (args.json) {
