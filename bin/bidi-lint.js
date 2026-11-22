@@ -11,6 +11,11 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', 
 const MAX_FILES = 5000;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_REPORT_FINDINGS = 50_000;
+// Explicit warning-only rules. Error and informational rules cannot be
+// downgraded by the budget mechanism, and unknown spellings fail closed.
+const BUDGETABLE_WARNING_RULES = new Set([
+  'legacy-bidi-embedding', 'suspicious-invisible',
+]);
 // Decode as UTF-8 strictly: replacement characters can conceal bidi controls.
 // The decoder also accepts and strips an optional leading UTF-8 BOM.
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
@@ -25,6 +30,8 @@ const HELP = [
   '  --summary-only  Print counts-only JSON; fail closed on scan errors',
   '  --strict        Treat warnings as failures (errors always fail)',
   '  --max-warnings N  Fail if warning count exceeds N (0–50000)',
+  '  --max-rule-warnings RULE=N  Repeatable per-warning-rule budget (0–50000)',
+  '                       RULE: legacy-bidi-embedding | suspicious-invisible',
   '  --show-marks    Include informational LRM/RLM/ALM diagnostics',
   '  --include-keys  Also scan decoded JSON/ARB object keys, not only values',
   '  --help, -h      Show this help',
@@ -43,7 +50,7 @@ const HELP = [
 ].join('\n');
 
 function argsFrom(argv) {
-  const options = { json: false, sarif: false, summaryOnly: false, strict: false, maxWarnings: null, showMarks: false, includeKeys: false, inputs: [] };
+  const options = { json: false, sarif: false, summaryOnly: false, strict: false, maxWarnings: null, warningRuleBudgets: new Map(), showMarks: false, includeKeys: false, inputs: [] };
   let positional = false;
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
@@ -65,6 +72,21 @@ function argsFrom(argv) {
         throw new Error('--max-warnings requires a whole number from 0 to 50000.');
       }
       options.maxWarnings = Number(raw);
+    }
+    else if (arg === '--max-rule-warnings') {
+      const raw = argv[++index];
+      if (typeof raw !== 'string') {
+        throw new Error('--max-rule-warnings requires RULE=N.');
+      }
+      const match = /^([a-z-]+)=(0|[1-9][0-9]{0,4})$/.exec(raw);
+      if (!match || !BUDGETABLE_WARNING_RULES.has(match[1]) ||
+          Number(match[2]) > MAX_REPORT_FINDINGS) {
+        throw new Error('--max-rule-warnings requires legacy-bidi-embedding=N or suspicious-invisible=N (0–50000).');
+      }
+      if (options.warningRuleBudgets.has(match[1])) {
+        throw new Error('--max-rule-warnings rule cannot be repeated: ' + match[1]);
+      }
+      options.warningRuleBudgets.set(match[1], Number(match[2]));
     }
     else if (arg === '--show-marks') options.showMarks = true;
     else if (arg === '--include-keys') options.includeKeys = true;
@@ -182,6 +204,21 @@ async function main() {
     info: all.filter(d => d.severity === 'info').length
   };
   const warningBudgetExceeded = args.maxWarnings !== null && counts.warnings > args.maxWarnings;
+  const warningRuleCounts = new Map([...BUDGETABLE_WARNING_RULES].map(rule => [rule, 0]));
+  for (const diagnostic of all) {
+    if (diagnostic.severity === 'warning' && warningRuleCounts.has(diagnostic.code)) {
+      warningRuleCounts.set(diagnostic.code, warningRuleCounts.get(diagnostic.code) + 1);
+    }
+  }
+  // Only known rule names and numeric totals enter aggregate reports, avoiding
+  // disclosure of any file path, source text, JSON path or finding position.
+  const warningRuleBudgets = Object.fromEntries([...args.warningRuleBudgets].map(
+    ([rule, limit]) => [rule, { limit, observed: warningRuleCounts.get(rule),
+      exceeded: warningRuleCounts.get(rule) > limit }]
+  ));
+  const warningRuleBudgetExceeded = Object.values(warningRuleBudgets).some(item => item.exceeded);
+  const ruleBudgetFields = args.warningRuleBudgets.size
+    ? { warningRuleBudgets, warningRuleBudgetExceeded } : {};
 
   if (args.summaryOnly) {
     if (errors.length) {
@@ -196,6 +233,7 @@ async function main() {
         warningBudget: args.maxWarnings,
         warningBudgetExceeded,
       }),
+      ...ruleBudgetFields,
     }, null, 2) + '\n');
   } else if (args.sarif) {
     process.stdout.write(JSON.stringify(toSarif(all, { errors }), null, 2) + '\n');
@@ -207,6 +245,7 @@ async function main() {
       ...(args.maxWarnings === null ? {} : {
         warningBudget: args.maxWarnings, warningBudgetExceeded,
       }),
+      ...ruleBudgetFields,
       diagnostics: all, errors
     }, null, 2) + '\n');
   } else {
@@ -231,8 +270,13 @@ async function main() {
     process.stderr.write('bidi-lint: warning budget exceeded (' + counts.warnings +
       ' warnings; limit ' + args.maxWarnings + ').\n');
   }
+  for (const [rule, { limit, observed, exceeded }] of Object.entries(warningRuleBudgets)) {
+    if (exceeded) process.stderr.write('bidi-lint: warning rule budget exceeded (' +
+      rule + ': ' + observed + ' warnings; limit ' + limit + ').\n');
+  }
   if (errors.length) process.exitCode = 2;
-  else if (counts.errors || (args.strict && counts.warnings) || warningBudgetExceeded) process.exitCode = 1;
+  else if (counts.errors || (args.strict && counts.warnings) || warningBudgetExceeded ||
+           warningRuleBudgetExceeded) process.exitCode = 1;
 }
 
 await main().catch(error => {

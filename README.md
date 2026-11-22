@@ -17,6 +17,7 @@ node bin/bidi-lint.js --include-keys --json locales/he.json
 node bin/bidi-lint.js --sarif --include-keys locales/ > bidi-lint.sarif
 node bin/bidi-lint.js --summary-only --strict locales/ > bidi-summary.json
 node bin/bidi-lint.js --summary-only --max-warnings 5 locales/ > bidi-budget.json
+node bin/bidi-lint.js --summary-only --max-rule-warnings legacy-bidi-embedding=0 --max-rule-warnings suspicious-invisible=3 locales/ > bidi-rule-budgets.json
 \`\`\`
 
 For project usage, the package declares a \`bidi-lint\` bin executable and \`./src/index.js\` module exports.
@@ -48,6 +49,12 @@ Exit statuses: \`0\` = no lint failures; \`1\` = errors (or warnings when \`--st
 ### Incremental warning budgets
 
 Use `--max-warnings N` to allow **at most N warnings across the complete scan**, with `N` an integer from 0 to 50,000. Unlike `--strict` (which fails on any warning), this allows teams to ratchet down legacy warnings without letting newly introduced warnings silently grow. If warnings exceed the budget, the CLI exits **1** and writes only counts and the configured threshold to stderr; it does not change report finding order or redact new source details. A scan/read/parse error still has exit status **2**, which takes precedence over the warning budget; regular errors always fail irrespective of the budget. The `--strict` policy still fails on all warnings even when a larger budget is supplied. Both detailed `--json` and redacted `--summary-only` JSON output include `warningBudget` and `warningBudgetExceeded` when the flag is used, while SARIF retains its standard structure and reports the budget violation via the process exit status. The option does not change files or suppress findings.
+
+### Per-rule warning budgets
+
+Use repeatable `--max-rule-warnings RULE=N` to cap each supported **warning rule independently**. Supported names are exactly `legacy-bidi-embedding` and `suspicious-invisible`; each may be supplied at most once, with a whole-number limit from 0 to 50,000. For example, `--max-rule-warnings legacy-bidi-embedding=0` forbids all legacy embeddings while `--max-rule-warnings suspicious-invisible=3` permits up to three invisible-character warnings. Unrecognized names, duplicate rules or invalid limits cause a usage failure (exit **2**). This is intentionally **warning-only**: error-severity findings always fail and informational annotations are not budgetable.
+
+A per-rule budget violation produces exit **1** and a rule-name/count/threshold message on stderr, without file names, source text, positions or raw values. The existing aggregate `--max-warnings N` and `--strict` options apply independently: passing the per-rule thresholds does not override a stricter global cap. JSON and `--summary-only` include `warningRuleBudgets` with fixed, enumerated rule names, observed warning counts, limits and `exceeded` flags, plus `warningRuleBudgetExceeded` when configured. SARIF retains its standard schema; the exit status and stderr disclose budget failure. Scan/read/parse errors remain exit **2**; `--summary-only` still emits no partial report when that occurs. Aggregate counts can reveal activity patterns, though they contain no file paths or text.
 
 ### Counts-only CI reporting
 
