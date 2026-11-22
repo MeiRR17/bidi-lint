@@ -49,7 +49,7 @@ Use **\`--sarif\`** to produce SARIF 2.1.0 on standard output for code scanning:
 
     node bin/bidi-lint.js --sarif --include-keys locales/ > bidi-lint.sarif
 
-The output includes rule metadata, severity levels and file locations. For ordinary TXT, Markdown, YAML and other raw-text scans, findings have source line/column coordinates. For JSON/ARB, the linter scans **decoded** values and keys; it **does not invent file line coordinates**. Such SARIF results identify the file only and include the JSON path, decoded-string offset and key/value type in their message and properties. This distinction is important for honest annotations in code-scanning interfaces.
+The output includes rule metadata, severity levels and file locations. **SARIF requires repository-relative paths**: invoke the CLI from a common containing directory and scan files beneath it. Absolute paths, parent-directory traversal (`../`), empty path segments and control characters are rejected in SARIF artifact locations rather than being presented as misleading code-scanning links. Ordinary text/JSON scanning retains its existing file-selection behavior. For ordinary TXT, Markdown, YAML and other raw-text scans, findings have source line/column coordinates. For JSON/ARB, the linter scans **decoded** values and keys; it **does not invent file line coordinates**. Such SARIF results identify the file only and include the JSON path, decoded-string offset and key/value type in their message and properties. This distinction is important for honest annotations in code-scanning interfaces.
 
 If any files could not be scanned or parsed, SARIF records `invocations[].executionSuccessful: false` and includes bounded tool-execution notifications; a failed scan is never labeled as a complete success. The CLI still returns exit status 2. Programmatic callers can pass `toSarif(findings, {errors: ['description']})`.
 
@@ -62,7 +62,7 @@ Programmatic use:
       severity: 'error', line: 1, column: 3, offset: 2,
       message: 'RLO can obscure visible content.'}]);
 
-The published module subpath is \`bidi-lint/sarif\`.
+The published module subpath is \`bidi-lint/sarif\`. Programmatic SARIF callers must supply repository-relative `finding.file` values; optional leading `./` segments are normalized away. This is an output-location integrity restriction, not a filesystem sandbox or symlink resolver.
 
 
 ## Library usage

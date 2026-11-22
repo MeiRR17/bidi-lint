@@ -19,11 +19,24 @@ const RULES = Object.freeze({
 const LIMIT = 50_000;
 
 function artifactUri(file) {
-  if (typeof file !== 'string' || !file) throw new TypeError('Diagnostic requires a relative file name.');
-  // URI-encode individual segments while retaining directory separators.
-  return file.replaceAll('\\', '/').split('/').map(segment =>
-    segment === '..' || segment === '.' ? segment : encodeURIComponent(segment)
-  ).join('/');
+  if (typeof file !== 'string' || !file) {
+    throw new TypeError('SARIF diagnostics require a repository-relative file path.');
+  }
+  const normalized = file.replaceAll('\\', '/');
+  // Code scanning interprets artifact locations relative to the checkout.
+  // Never emit an absolute path or parent traversal as a misleading relative
+  // link; the CLI must be run from a common containing project directory.
+  if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized) ||
+      /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new RangeError('SARIF artifact paths must be relative and must not contain control characters.');
+  }
+  const segments = normalized.split('/');
+  if (segments.some(segment => !segment || segment === '..')) {
+    throw new RangeError('SARIF artifact paths must not traverse outside the working directory.');
+  }
+  const canonical = segments.filter(segment => segment !== '.');
+  if (!canonical.length) throw new RangeError('SARIF artifact requires a file path.');
+  return canonical.map(encodeURIComponent).join('/');
 }
 function sarifLevel(severity) {
   return severity === 'error' ? 'error' : severity === 'warning' ? 'warning' : 'note';
