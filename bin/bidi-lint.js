@@ -10,6 +10,9 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', 
 const MAX_FILES = 5000;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_REPORT_FINDINGS = 50_000;
+// Decode as UTF-8 strictly: replacement characters can conceal bidi controls.
+// The decoder also accepts and strips an optional leading UTF-8 BOM.
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 const HELP = [
   'bidi-lint v0.1.0 — Find risky Unicode direction controls',
   '',
@@ -127,7 +130,14 @@ async function main() {
       continue;
     }
     try {
-      const source = await readFile(file.path, 'utf8');
+      // Bound the actual read as well as the earlier stat. Files can grow
+      // between collection and scanning; never silently scan a partial file.
+      const bytes = await readFile(file.path);
+      if (bytes.length > MAX_FILE_BYTES) {
+        errors.push(path + ': file exceeds 5 MiB after collection.');
+        continue;
+      }
+      const source = UTF8_DECODER.decode(bytes);
       const parsed = JSON_EXTENSIONS.has(extname(file.path).toLowerCase());
       const diagnostics = parsed
         ? lintJson(source, { showMarks: args.showMarks, includeKeys: args.includeKeys })
